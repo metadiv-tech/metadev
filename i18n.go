@@ -60,7 +60,8 @@ func runI18n(cmd *cobra.Command, args []string) {
 }
 
 func extractTranslationKeys(rootDir string) ([]TranslationKey, error) {
-	var keys []TranslationKey
+	// First pass: build global mapping of t-variables to namespaces
+	globalTranslationMap := make(map[string]string)
 
 	err := filepath.WalkDir(rootDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -75,7 +76,41 @@ func extractTranslationKeys(rootDir string) ([]TranslationKey, error) {
 			return nil
 		}
 
-		fileKeys, err := parseFile(path)
+		fileMap, err := extractUseTranslationDeclarations(path)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: Error parsing declarations in file %s: %v\n", path, err)
+			return nil
+		}
+
+		// Merge into global map
+		for tVar, namespace := range fileMap {
+			globalTranslationMap[tVar] = namespace
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	// Second pass: extract translation keys using the global mapping
+	var keys []TranslationKey
+
+	err = filepath.WalkDir(rootDir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+
+		if d.IsDir() && shouldSkipDir(d.Name()) {
+			return filepath.SkipDir
+		}
+
+		if !strings.HasSuffix(path, ".tsx") {
+			return nil
+		}
+
+		fileKeys, err := parseFileWithMapping(path, globalTranslationMap)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: Error parsing file %s: %v\n", path, err)
 			return nil
@@ -131,6 +166,72 @@ func parseFile(filePath string) ([]TranslationKey, error) {
 					File:      filePath,
 				})
 			}
+		}
+	}
+
+	return keys, nil
+}
+
+func extractUseTranslationDeclarations(filePath string) (map[string]string, error) {
+	content, err := os.ReadFile(filePath)
+	if err != nil {
+		return nil, err
+	}
+
+	translationMap := make(map[string]string)
+	contentStr := string(content)
+
+	// Find all useTranslation declarations: const { t: tVariable } = useTranslation('namespace')
+	useTranslationRegex := regexp.MustCompile(`const\s*{\s*t:\s*(\w+)\s*}\s*=\s*useTranslation\s*\(\s*['"]([^'"]+)['"]\s*\)`)
+	matches := useTranslationRegex.FindAllStringSubmatch(contentStr, -1)
+
+	for _, match := range matches {
+		if len(match) >= 3 {
+			tVariable := match[1]
+			namespace := match[2]
+			translationMap[tVariable] = namespace
+		}
+	}
+
+	return translationMap, nil
+}
+
+func parseFileWithMapping(filePath string, globalMapping map[string]string) ([]TranslationKey, error) {
+	content, err := os.ReadFile(filePath)
+	if err != nil {
+		return nil, err
+	}
+
+	var keys []TranslationKey
+	contentStr := string(content)
+
+	// Find all translation function calls (pattern: tSomething('key')) - must start with 't'
+	allCallsRegex := regexp.MustCompile(`\b(t[A-Za-z][A-Za-z0-9]*)\s*\(\s*['"]([^'"]+)['"]\s*\)`)
+	allCallMatches := allCallsRegex.FindAllStringSubmatch(contentStr, -1)
+
+	for _, callMatch := range allCallMatches {
+		if len(callMatch) >= 3 {
+			tVariable := callMatch[1]
+			key := callMatch[2]
+
+			var namespace string
+			if ns, exists := globalMapping[tVariable]; exists {
+				// Use the namespace from global mapping
+				namespace = ns
+			} else {
+				// Infer namespace from variable name (e.g., tCommon -> common)
+				if strings.HasPrefix(tVariable, "t") && len(tVariable) > 1 {
+					namespace = strings.ToLower(tVariable[1:])
+				} else {
+					namespace = "common" // fallback to common
+				}
+			}
+
+			keys = append(keys, TranslationKey{
+				Key:       key,
+				Namespace: namespace,
+				File:      filePath,
+			})
 		}
 	}
 
