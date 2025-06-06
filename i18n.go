@@ -146,12 +146,12 @@ func generateTranslationFiles(rootDir string, keys []TranslationKey) error {
 
 	for namespace, keysList := range namespaceKeys {
 		translationMap := make(map[string]string)
-		
+
 		uniqueKeys := make(map[string]bool)
 		for _, key := range keysList {
 			uniqueKeys[key] = true
 		}
-		
+
 		for key := range uniqueKeys {
 			translationMap[key] = ""
 		}
@@ -185,7 +185,7 @@ func setupI18nDirectory(rootDir string) error {
 
 func updateGitignore(rootDir string) error {
 	gitignorePath := filepath.Join(rootDir, ".gitignore")
-	
+
 	gitignoreExists := true
 	content, err := os.ReadFile(gitignorePath)
 	if os.IsNotExist(err) {
@@ -196,7 +196,7 @@ func updateGitignore(rootDir string) error {
 	}
 
 	contentStr := string(content)
-	
+
 	if strings.Contains(contentStr, ".i18n/") {
 		return nil
 	}

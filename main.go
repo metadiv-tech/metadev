@@ -22,4 +22,5 @@ func main() {
 
 func init() {
 	rootCmd.AddCommand(i18nCmd)
+	rootCmd.AddCommand(joinI18nCmd)
 }
